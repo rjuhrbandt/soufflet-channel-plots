@@ -17,7 +17,7 @@ def plot(
 	level: int, 
 	meshpath: str, 
 	filter_lat: bool = False, lat_north: float = 12.7525, lat_south: float = 5.0071, 
-	unglue=False, cyclic_length=4.5,
+	unglue=True, cyclic_length=4.5,
 ):
 
 	"""
