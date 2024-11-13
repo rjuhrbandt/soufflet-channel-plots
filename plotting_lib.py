@@ -99,11 +99,29 @@ def plot(
 		X = X[lat_mask.values]
 		Y = Y[lat_mask.values]
 
-	# Unglue mesh if required
+	 # Unglue mesh if required
 	if unglue:
-		# to be implemented...
-		pass
-
+		try:
+		    # Load triangulation data and node coordinates
+		    tri = np.loadtxt(f'{meshpath}elem2d.out', skiprows=1, dtype=int)
+		    nodes = np.loadtxt(f'{meshpath}nod2d.out', skiprows=1)
+		    xcoord, ycoord = nodes[:, 1], nodes[:, 2]
+		
+		    # Map x and y coordinates to triangles
+		    xc, yc = xcoord[tri - 1], ycoord[tri - 1]
+		
+		    # Adjust cyclic coordinates
+		    xmin = xc.min(axis=1)
+		    for i in range(3):
+			ai = np.where(xc[:, i] - xmin > cyclic_length / 2)
+			xc[ai, i] -= cyclic_length
+		
+		    # Set X and Y as the mean along the second axis
+		    X = xc.mean(axis=1)
+		    Y = yc.mean(axis=1)
+		except FileNotFoundError:
+		    print("Required files for ungluing not found; skipping unglue step.")
+			
 	# Set units and colormap based on units
 	units = getattr(dat, 'units', 'none')
 	colormap_info = {
