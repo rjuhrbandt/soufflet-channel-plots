@@ -9,32 +9,36 @@ import cmocean
 import pyfesom2 as pf
 from matplotlib.colors import TwoSlopeNorm
 
+# Recent changes:
+# Adjust variable names in fesom.mesh.diag.nc for compatibility with most recent FESOM version
+# Change plotting from a file in resultpath to plotting directly from a dobj_data
+
 def plot(
-	resultpath: str,  
-	str_id: str, 
-	year: int, 
+	dobj_data,
+	meshdiag: xr.Dataset,
+	meshpath: str,
+	str_id: str,
 	time: int, 
-	level: int, 
-	meshpath: str, 
+	level: int,
 	filter_lat: bool = False, lat_north: float = 12.7525, lat_south: float = 5.0071, 
 	unglue=True, cyclic_length=4.5,
 ):
 
 	"""
 	Plot data of the FESOM model output for the Soufflet channel 
-	for a given year, time, and vertical level.
+	for a given time and vertical level.
 
 	Parameters:
-	- resultpath (str): Path to the result files.
+	- dobj_data (xr.DataArray or xr.Dataset): data file which should be plotted
+	- meshdiag (xr.Dataset): xr.open_dataset(fesom.mesh.diag.nc)
+	- meshpath (str): Path to the mesh files (nod2.out, elem2d.out etc.).
 	- str_id (str): Variable name to plot.
-	- year (int): Year of the data file to use.
 	- time (int): Time index to select (-1 for last).
 	- level (int): Vertical level index to select (if data has a vertical dimension).
-	- meshpath (str): Path to the mesh files (nod2.out, elem2d.out etc.). If None, an attempt will be made to infer it.
 	- filter_lat (bool, default: False): Whether to filter data based on latitude (most eddy activity seems to happen between lat_north and lat_south)
 	- lat_north (float, optional): Latitude to cut off data to the north.
 	- lat_south (float, optional): Latitude to cut off data to the south.
-	- unglue (bool): Whether to unglue the data (if mesh is cyclic, as in Soufflet channel - to be implemented). Without ungluing,
+	- unglue (bool): Whether to unglue the data at the periodic boundaries. Without ungluing,
 	there can be some spurious meridional patterns.
 	- cyclic_length (float): Width of the channel in degrees for ungluing.
 	"""
@@ -47,13 +51,6 @@ def plot(
 		inferred_meshpath = os.path.join(resultpath, '../')  # Default inference logic (one level up)
 		meshpath = inferred_meshpath
 
-	# Try to load the mesh diagnostics file. By default (the way FESOM outputs is), it is stored with the result files. 
-	try:
-		meshdiag = xr.open_mfdataset(f'{resultpath}fesom.mesh.diag.nc')
-	except FileNotFoundError:
-		print(f"Mesh diagnostics file not found in {resultpath}")
-		return
-
 	# Load mesh
 	print("Loading mesh...")
 	mesh = pf.load_mesh(meshpath, abg=[alpha, beta, gamma], usepickle=False)
@@ -64,12 +61,12 @@ def plot(
 	yy2 = mesh.y2[mesh.elem[:, :elem_n]].mean(axis=1)
 
 	# Load dataset and select time
-	if dobj_data == None:
-		try:
-			dat = xr.open_mfdataset(f'{resultpath}{str_id}.fesom.{year}.nc')[str_id].isel(time=time)
-		except (KeyError, FileNotFoundError) as e:
-			print(f"Failed to load data file or variable '{str_id}': {e}")
-			return
+	if isinstance(dobj_data, xr.Dataset):
+		dat = dobj_data[str_id]
+	else:
+		dat = dobj_data
+	
+	dat = dat.isel(time=time)
 
 	# Check if data has a vertical dimension and select level if present
 	if 'nz1' in dat.dims or 'nz' in dat.dims:
@@ -77,7 +74,13 @@ def plot(
 	dat = dat.squeeze()  # Remove extra dimensions
 
 	# Determine plot coordinates
-	X, Y = (meshdiag.lon, meshdiag.lat) if 'nod2' in dat.dims else (xx2, yy2)
+	if "nod2" in dat.dims:
+		print("nod2 found in dat.dims, setting X, Y = (meshdiag.lon, meshdiag.lat)")
+		X, Y = (meshdiag.lon, meshdiag.lat)
+	else:
+		print("nod2 not found in dat.dims, setting X, Y = (xx2, yy2) (averaged meshdiag.lon and .lat to triangle centers")
+		X, Y = (xx2, yy2)
+	print("Shape of X, Y, dat:", X.shape, Y.shape, dat.shape)
 
 	# Filter data based on latitude limits, if specified
 	if filter_lat:
@@ -100,27 +103,27 @@ def plot(
 		Y = Y[lat_mask.values]
 
 	 # Unglue mesh if required
-	if unglue:
+	if unglue and str_id in ["u", "v"]: # No need for ungluing for unod, vnod, curl_u, w
 		try:
-		    # Load triangulation data and node coordinates
-		    tri = np.loadtxt(f'{meshpath}elem2d.out', skiprows=1, dtype=int)
-		    nodes = np.loadtxt(f'{meshpath}nod2d.out', skiprows=1)
-		    xcoord, ycoord = nodes[:, 1], nodes[:, 2]
+			# Load triangulation data and node coordinates
+			tri = np.loadtxt(f'{meshpath}elem2d.out', skiprows=1, dtype=int)
+			nodes = np.loadtxt(f'{meshpath}nod2d.out', skiprows=1)
+			xcoord, ycoord = nodes[:, 1], nodes[:, 2]
 		
-		    # Map x and y coordinates to triangles
-		    xc, yc = xcoord[tri - 1], ycoord[tri - 1]
+			# Map x and y coordinates to triangles
+			xc, yc = xcoord[tri - 1], ycoord[tri - 1]
 		
-		    # Adjust cyclic coordinates
-		    xmin = xc.min(axis=1)
-		    for i in range(3):
-			ai = np.where(xc[:, i] - xmin > cyclic_length / 2)
-			xc[ai, i] -= cyclic_length
+			# Adjust cyclic coordinates
+			xmin = xc.min(axis=1)
+			for i in range(3):
+				ai = np.where(xc[:, i] - xmin > cyclic_length / 2)
+				xc[ai, i] -= cyclic_length
 		
-		    # Set X and Y as the mean along the second axis
-		    X = xc.mean(axis=1)
-		    Y = yc.mean(axis=1)
+			# Set X and Y as the mean along the second axis
+			X = xc.mean(axis=1)
+			Y = yc.mean(axis=1)
 		except FileNotFoundError:
-		    print("Required files for ungluing not found; skipping unglue step.")
+			print("Required files for ungluing not found; skipping unglue step.")
 			
 	# Set units and colormap based on units
 	units = getattr(dat, 'units', 'none')
@@ -153,6 +156,8 @@ def plot(
 	if units in {'m/s', '1/s', 'none'}:
 		norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
 
+	print(X.shape, Y.shape, dat.shape)
+	
 	# Apply tripcolor without vmin/vmax if norm is defined
 	im = ax.tripcolor(X, Y, dat, shading='flat', cmap=cmap, norm=norm, 
 					  **({'vmin': vmin, 'vmax': vmax} if norm is None else {}))
@@ -185,11 +190,11 @@ def plot(
 			np.datetime64('2024-11-05')
 		"""
 		return datetime.astype('datetime64[D]')
-
-	try:
-		title_text = f'{remove_time(dat.time.values)}, (level,nz1)=({level},{dat.nz1.values}m)'
-	except AttributeError:
-		title_text = f'{remove_time(dat.time.values)}, (level,nz)=({level},{getattr(dat, "nz", "N/A")}m)'
+	
+	if "nz1" in dobj_data.dims:
+		title_text = f'{remove_time(dat.time.values)}, (level,nz1)=({level},{np.round(dat.nz1.values,1)}m)'
+	elif "nz" in dobj_data.dims:
+		title_text = f'{remove_time(dat.time.values)}, (level,nz1)=({level},{np.round(dat.nz.values,1)}m)'
 	plt.title(title_text, loc='center', pad=20, fontsize=14, color='black', y=0.95)
 
 	plt.show(block=False)
